@@ -37,7 +37,7 @@
 
 ## 람다 사용시 주의점
 
-- 람다는 메서드난 클래스와 달리 이름이 없고 문서화도 못한다.
+- 람다는 메서드나 클래스와 달리 이름이 없고 문서화도 못한다.
 - 코드 자체로 동작이 명확히 설명되지 않거나 코드 줄 수가 많아지면 람다를 쓰지 말아야 한다.
 - 3줄 이상시 가독성 떨어진다.
 - 열거 타입 생성자에 넘겨지는 인수들의 타입도 컴파일타임에 추론된다. → 열거 타입 생성자 안의 람다는 열거 타입의 인스턴스 멤버에 접근할 수 없다. (인스턴스는 런타임에 생성 되기때문)
@@ -75,8 +75,10 @@ PLUS("+", (x, y) -> x + y);
 # 아이템43. 람다보다는 메서드 참조를 사용하라
 
 - 람다 보다 더 간결한 방법! 메서드 참조(Method reference)
+- 클래스::메소드 // 정적(static) 메소드 참조
+참조변수::메소드 // 인스턴스 메소드 참조
 - 자바 8때 Map에 추가 된 merge메서드
-    - map.merge(키, 값, 함수) → 키가 맵에 없으면 {키,값}, 없으면 {키, 함수의 결과}를 저장한다.
+    - map.merge(키, 값, 함수) → 키가 맵에 없으면 {키,값}, 있으면 {키, 함수의 결과}를 저장한다.
     - 람다식으로 구현 → count, incr는 공간만 차지
 
         ```jsx
@@ -188,7 +190,7 @@ Function 인터페이스 뿐만아니라 기본함수형, Consumer, Supplier, Pr
 public interface ExecutorService extends Executor {
     // Callable<T>와 Runnable을 각각 인수로 하여 다중정의했다.
     // submit 메서드를 사용할 때마다 형변환이 필요해진다.
-    <T> Future<T> submit(Callback<T> task);
+    <T> Future<T> submit(Callable<T> task);
     Future<?> submit(Runnable task);
 }
 ```
@@ -278,3 +280,316 @@ public interface ExecutorService extends Executor {
 
 - 스트림 파이프라인은 일단 한 값을 다른 값에 매핑하면 원래의 값을 잃는 구조이다.
 - 가능하면, 앞 단계의 값이 필요할 때 매핑을 거꾸로 수행해야 한다.
+
+# 아이템46. 스트림에서는 부작용 없는 함수를 사용하라.
+
+- 스트림 패러다임의 핵심 : **계산을 일련의 변환으로 재구성**하는 부분
+- 각 변환 단계는 가능한 한 이전 단계의 결과를 받아 처리하는 **순수함수**여야 한다.
+- 순수함수 :  오직 입력만이 결과에 영향을 주는 함수
+- 다른 가변 상태를 참조하지 않고, 함수 스스로도 다른 상태를 변경하지 않는다.
+- 스트림 연산에 건네는 함수 객체는 모두 부작용이 없어야 한다.
+
+## forEach 연산
+
+- **forEach 연산은 스트림 계산 결과를 보고할 때만 사용하고, 계산하는 데는 쓰지 말아야 한다.**
+    - forEach 연산은 종단연산 중 기능이 가장 적고 덜 스트림 적임
+    - 병렬화 할 수 없음
+
+## Collector(수집기)
+
+- 축소 전략을 캡슐화한 블랙박스 객체
+- 축소 : 스트림의 원소들을 객체하나에 취합한다.
+- 수집기가 생성하는 객체는 일반적으로 컬렉션이라 collector라는 이름을 쓴다.
+
+### **수집기 종류**
+
+- toList() - 리스트 반환
+- toSet() - 집합 반환
+- toCollection(collectionFactory) - 프로그래머가 저장한 컬렉션 타입 반환
+
+예시 코드
+
+```jsx
+List<String> topTen = freq.keySet().stream()
+    .sorted(comparing(freq::get).reversed())
+    .limit(10)
+    .collect(toList());
+}
+```
+
+- comparing() : 키 추출 함수를 받는 비교자 생성 메서드
+- freq::get : 한정적 메서드 참조, 키 추출 함수
+
+    (입력받은 단어(키)를 빈도표에서 찾아(추출) 빈도 반환)
+
+- 가장 흔한 단어가 위에 오도록 reversed() 비교자(comparing)을 역순으로 정렬
+- **Collectors의 멤버를 정적 임포트하여 쓰면 스트림 파이프라인 가독성이 좋아진다.**
+
+## 맵 수집기
+
+Collectors의 대부분의 메서드들은 **스트림을 맵으로 취합**하는 기능이다.
+
+스트림의 각 원소는 키 하나와 값 하나에 연관되어 있다. 그리고 다수의 스트림 원소가 같은 키에 연관될 수 있다.
+
+### toMap(keyMapper, valueMapper)
+
+- 스트림원소를 키에 매핑하는 함수와 값에 매핑하는 함수를 인수로 받는다.
+- keyMapper : Stream 요소 에서 Map 키 추출
+- valueMapper : 지정된 키와 관련된 값 추출
+
+```jsx
+// toMap 수집기 사용하여 문자열을 열거 타입 상수에 매핑
+private static final Map<String, Operation> stringToEnum = 
+    Stream.of(values()).collect(
+        toMap(Obejct::toString, e->e));
+```
+
+- toMap 형태는 스트림의 각 원소가 고유한 키에 매핑되어 있을 때 적합하다.
+- 스트림 원소 다수가 같은 키를 사용한다면 파이프라인이 IllegalStateException던지며 종료된다.
+- 충돌을 다루기 위해 병합(merge)함수를 제공한다.
+- 병합함수의 형태는 BinaryOperator<U>이며, U는 해당 맵의 값 타입이다.
+- 같은 키를 공유하는 값들은 기존 값에 합쳐진다. → 병합함수가 곱셈이면 키가 같은 모든값을 곱한 값을 얻는다.
+
+### 인수3개 받는 toMap이 유용한 경우
+
+세 번째 인수는 BinaryOperator 이며 키 충돌시 처리 방법을 지정한다.
+
+1. 각 키와 해당 키의 특정 원소를 연관 짓는 맵을 생성하는 수집기 
+
+```jsx
+// 음악가와 그 음악가의 베스트 앨범을 연관짓는 예제
+Map<Artist, Album> topHits = albums.collect(
+// BinaryOperator 정적 임포트한  maxBy 정적패터리 메서드 사용
+toMap(Album::artist, a->a, maxBy(comparing(Album::sales))));
+```
+
+2. 충돌이 나면 마지막 값을 취하는 수집기 
+
+```jsx
+toMap(keyMapper, valueMapper, (oldVal, newVal) -> newVal)
+```
+
+### 인수4개 받는 toMap
+
+네 번째 인수로 맵 팩터리를 받는다.
+
+```jsx
+Collector<T,?,M> toMap(Function<? super T, ? extends K> keyMapper, 
+																Function<? super T,? extends U> valueMapper, 
+																BinaryOperator<U> mergeFunction,
+																Supplier<M> mapSupplier)
+```
+
+인수로는 EnumMap이나 TreeMap 처럼 원하는 특정 맵 구현체를 지정할 수 있다.(기본적으로 HashMap)
+
+## groupingBy
+
+- 입력 : 분류함수
+- 출력 : 원소들을 카테고리별로 모아 놓은 맵을 담은 수집기
+- 분류함수(classifier) : 입력 받은 원소가 속하는 카테고리를 반환
+- **분류함수가 반환한 카테고리**가 해당 원소의 **맵 키**로 쓰인다.
+- 다중정의된 groupingBy 중 형태가 가장 간단한 것은 **분류 함수 하나를 인수로 받아 맵을 반환**
+- 반환된 맵에 담긴 각각의 값은 **해당 카테고리에 속하는 원소들을 모두 담은 리스트** 이다.
+
+```jsx
+//알파벳화(아나그램)화 한 단어를 알파벳화 결과가 같은 단어들의 리스트로 매핑하는 맵 생성
+words.collect(groupingBy(word -> alphabetize(word))) 
+```
+
+- groupingBy가 반환하는 수집기가 리스트 외의 값을 갖는 맵을 생성하게 하려면, 분류함수와 함께 매개변수로 **다운스트림 수집기**도 명시해야 한다.
+- 다운스트림 수집기의 역할
+    - **해당 카테고리의 모든 원소를 담은 스트림으로부터 값을 생성**
+    - toSet() - groupingBy는 원소들의 리스트가 아닌 집합(Set)을 '값'으로 갖는 맵을 만듬
+    - toCollction(collectionFactory) - 컬렉션을 '값'으로 갖는 맵 생성
+    - counting() - 각 '키'를 해당 '키'에 속하는 원소의 개수(값)과 매핑한 맵을 얻음
+
+```jsx
+Collector<T, ?, M> groupingBy(Function<? super T, ? extends K> classifier,
+                                  Supplier<M> mapFactory,//반환할 컬렉션
+                                  Collector<? super T, A, D> downstream)
+```
+
+- 맵 팩터리도 지정할 수 있게 해준다.
+    - 맵팩터리 매개변수는 다운스트림 매개변수보다 앞에 놓인다.
+
+        → 점층적 인수 목록 패턴에 어긋난다.
+
+    - 맵과 그 안에 담긴 컬렉션의 타입을 모두 지정할 수 있다
+
+    ```jsx
+    //값이 TreeSet인 TreeMap을 반환하는 수집기
+    TreeMap<String, Long> collect = stringList.stream()
+                    .collect(groupingBy(String::toLowerCase, TreeMap::new, toSet()));
+    ```
+
+## partitioningBy
+
+분류함수 자리에 프레디키트(predicate 함수형 인터페이스)를 받고 키가 Boolean인 맵을 반환한다.
+
+Predicate에 더해 다운스트림 수집기까지 입력 받는 버전도 다중정의 되어 있다.
+
+## Counting 메서드
+
+다운스트림 수집기 전용이다.
+
+Stream의 count 메서드 같은 기능함으로 **collect(counting())형태도 사용될 일 없다.**
+
+## Collectors에 정의되어 있지만 '수집'과 관련없는 메서드
+
+- minBy, maxBy : 인수로 받은 비교자를 이용해 스트림에서 min, max 원소 찾아 반환한다.
+- joining 메서드
+    - (문자열 등의) CharSequence 인스턴스의 스트림에만 적용할 수 있다.
+    - 매개변수가 없으면 단순히 원소들을 연결하는 수집기를 반환한다.
+    - 인수 하나짜리는 CharSequence 타입의 구분문자를 매개변수로 받는다.
+    - 연결부위에 구분문자를 삽입한다.
+    - 인수 세개짜리는 구분문자, 접두문자(prefix), 접미문자(suffix)를 받는다.
+
+## ✏️핵심정리
+
+- 스트림 파이프라인 프로그래밍의 핵심은 부작용 없는 함수 객체에 있다.
+- 스트림뿐 아니라 스트림 관련 객체에 건네지는 모든 함수 객체가 부작용이 없어야 한다.
+- 종단 연산 중 forEach는 스트림이 수행한 계산 결과를 보고할 때만 이용해야 한다.
+
+    계산 자체에는 이용하면 안 된다.
+
+- 수집기 팩터리 toList, toSet, toMap, groupingBy, joining 알아두자!!
+
+# 아이템47. 반환 타입으로는 스트림보다 컬렉션이 낫다.
+
+자바8 이전
+
+- 기본은 Collection, Set, List와 같은 컬렉션 인터페이스
+- Iterable
+
+    → for-each문에서만 쓰이거나 반환된 원소 시퀀스가 contains(Object)같은 일부 컬렉션 메서드를 구현할 수 없는 경우
+
+- 배열
+
+    → 반환 원소들이 기본타입이거나 성능에 민간한 상황일 경우
+
+자바8 이후 스트림 등장!
+
+- 스트림은 반복(iteration)을 지원하지 않는다.
+
+## 중개 어댑터 메서드를 만들어 반복 문제 해결하기
+
+### Stream<E>를 Iterable<E>로 중개해주는 어댑터
+
+```java
+//자바가 제공하는게 아니라 만들어 사용하는거다
+public static <E> Iterable<E> iterableOf(Stream<E> stream) {
+	return stream::iterator;
+}
+//사용예시
+for (ProcessHandle ph : iterableOf(ProcessHandle.allProcesses()) {
+}
+```
+
+### Iterable<E>를 Stream<E>로 중개해주는 어댑터
+
+```java
+public static<E> Stream<E> streamOf(Iterable<E> iterable) {
+    return StreamSupport.stream(iterable.spliterator(), false);
+}
+```
+
+- 메서드가 오직 스트림 파이프라인에서만 쓰일 걸 안다면 스트림을 반환
+- 반대로, 반환된 객체들이 반복문에서만 쓰인다면 Iterable을 반환
+
+원소시퀀스를 반환하는 공개 API의 반환타입에는 Collection이나 그 하위타입을 사용하는 것이 최선이다. → Colleciton은 Iterable의 하위 타입이고 Stream 메서드도 제공한다.
+
+## 전용 컬렉션 구현
+
+반환하는 시퀀스의 크기가 메모리에 올려도 안전할 만큼 작다면 ArrayList나 HashSet 같은 표준 컬렉션 구현체로 반환하는 것이 최선이다.
+
+하지만, 단지 컬렉션을 반환한다는 이유로 덩치 큰 시퀀스를 메모리에 올려서는 안된다.
+
+**반환할 시퀀스가 크지만 표현을 간결하게 할 수 있는 경우 → 전용 컬렉션 구현을 고려하자!**
+
+예시 - 멱집합( 한 집합의 모든 부분집합을 원소로 하는 집합 )
+
+> {a,b,c}의 멱집합 : {{},{a},{b},{a,b},{b,c},{a,c},{a,b,c}}
+
+→ 원소의 개수가 n개이면 멱집합의 갯수는 2^n개 가 된다. → 표준컬렉션으로 구현하면 메모리차지
+
+→ AbstractList를 이용하여 전용 컬렉션을 구현할 수 있다.
+
+- AbstractCollection을 활용해서 컬렉션 구현체를 작성할 때는 Iterable용 메서드 외에 contains와 size만 구현하면 된다.
+- contains와 size 구현이 불가할 경우는 컬렉션보다 스트림이나 Iterable을 반환하는게 낫다.
+
+## ✏️핵심정리
+
+- 원소 시퀀스를 반환하는 메서드를 작성할 때는, 스트림 처리, 반복처리 모두 고려해야한다.
+- 컬레션을 반환할 수 있으면 그렇게 하자
+- 반환 전부터 이미 원소들을 컬렉션에 담아 관리하고 있거나 원소의 개수가 적다면 ArrayList와 같은 표준 컬렉션에 담아 반환한다.
+- 원소가 많다면 전용 컬렉션 구현을 고려하자
+- 컬렉션 반환이 불가하면 Iterable 이나 스트림으로 반환한다.
+
+# 아이템48. 스트림 병렬화는 주의해서 적용하라
+
+동시성 프로그래밍, 병렬 스트림 파이프라인 프로그래밍을 할 때는 안정성과 응답 가능 상태를 유지해야 한다.
+
+데이터 소스가 Stream.iterate거나 중간 연산으로 limit를 쓰면 파이프라인 병렬화로는 성능을 개선할 수 없다.
+
+→ 스트림 파이프라인을 마구잡이로 병렬화하면 오히려 성능이 떨어질 수 있다.
+
+## 병렬 수행 효율에 영향을 주는 요소
+
+### 자료구조의 종류
+
+스트림의 소스가 ArrayList, HashMap, ConcurrentHashMap의 인스턴스거나 배열, int 범위, long범위일 때 병렬화 효과가 가장 좋다.
+
+→ 위 자료구조의 특징
+
+- 데이터를 원하는 크기로 정확하고 손쉽게 나눌 수 있어 다수의 스레드에 분배하기 좋다.
+
+    나누는 작업은 Stream, Iterable의 메서드인 Spliterator가 한다.
+
+    직접 구현한 Stream, Iterable, Collection의 병렬화의 이점을 높이려면 Spliterator를 재정의하자.
+
+- 원소들을 순차적으로 실행할 때의 참조 지역성이 뛰어나다.
+
+참조 지역성이란? 
+
+- 이웃한 원소의 참조들이 메모리에 연속해서 저장되어있다는 뜻이다.
+- 참조들이 가리키는 실제 객체가 메모리에서 서로 떨어져있는 경우 참조 지역성이 낮다.
+
+    → 스레드는 데이터가 주 메모리에서 캐시 메모리로 전송되어 오기를 기다리는 시간이 늘어난다.
+
+- 다량의 데이터를 처리하는 벌크연산을 병렬화 할 때 중요한 요소이다.
+- 참조 지역성이 가장 뛰어난 자료구조는 배열이다.
+
+### 스트림 파이프라인의 종단 연산의 동작 방식
+
+- 축소(reduction) : 종단 연산 중 병렬화에 가장 적합한 작업
+
+    → 파이프라인에서 만들어진 모든 원소를 하나로 합친다. 
+
+    - Stream의 reduce메서드 중 하나
+    - min, max, count, sum 등
+- anyMath, allMath, noneMatch 처럼 조건에 맞으면 바로 반환되는 메서드도 병렬화에 적합
+- 가변축소(mutable reduction)을 수행하는 Stream의 collect메서드는 병렬화에 부적합하다.→ 컬렉션 합치는데 부담이 크다.
+
+## 주의점
+
+스트림을 잘못 병렬화하면 성능 저하, 결과 오류, 오작동한다.
+
+안전실패(safety failure) - 결과오류, 오작동
+
+### Stream명세에 정의된 함수객체에 대한 엄중한 규약
+
+: 안전실패가 발생할 수 있는 mappers, filters, 혹은 프로그래머가 제공한 다른 함수 객체에 대한 규약
+
+1. Associative : Stream의 reduce연산에 건네지는 accumulator(누적기)와 combiner(결합기) 함수는 반드시 결합법칙을 만족해야 한다. → (a op b)op c == a op(b op c)
+2. Non-interfering : 파이프라인이 수행되는 동안 데이터 소스가 변경되지 않아야 한다.
+3. Stateless : 상태를 갖지 않아야 한다.
+
+### 스트림 병렬화는 오직 성능 최적화 수단일 뿐이다.
+
+: 변경 전후 성능 테스트를 하여 적용해야한다.
+
+### 랜덤한 수로 이뤄진 스트림의 병렬화
+
+- Random, ThreadLocalRandom 보다는 SplittableRandom → 성능이 선형으로 증가한다.
+- TheadLocalRandom은 단일 스레드에서 사용한다.
+- Random은 모든 연산을 동기화하기 때문에 최악의 성능을 보인다.
